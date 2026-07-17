@@ -119,7 +119,7 @@ done yet.
 | `rcon.py` | Minimal Source RCON client, used internally by `mc_sleepd.py` |
 | `rcon_cli.py` | Standalone command-line tool for sending yourself RCON commands (see above) |
 | `config.py` | All the tunable settings: ports, timeouts (20 min idle / 6h restart), messages, RCON/Discord paths |
-| `run_server.sh` | The actual `java ...` invocation used as `mc-server.service`'s `ExecStart` (same flags as `../startup.sh`, just without its restart loop - systemd handles restarts now) |
+| `run_server.sh` | The actual `java ...` invocation used as `mc-server.service`'s `ExecStart` |
 | `rcon_password.txt` | Auto-generated RCON password (also written into `../server.properties`); `chmod 600`, gitignored |
 | `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv` and every chat message to `chat.csv` |
 | `logins.csv`, `chat.csv` | The login/chat history itself (see above); gitignored, grows locally |
