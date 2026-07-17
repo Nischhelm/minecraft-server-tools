@@ -131,13 +131,13 @@ done yet.
 
 | File | Purpose |
 |---|---|
-| `logins.csv`, `chat.csv` | The login/chat history itself (see above); gitignored, grows locally |
-| `known_bots.txt` | Player names already announced once as scanner `bot` attempts, so Discord isn't spammed on repeats; gitignored |
-| `maps/` | Output of `region_map.py`; gitignored, regenerate anytime |
+| `logins.csv`, `chat.csv` | The login/chat history itself (see above); grows locally |
+| `known_bots.txt` | Player names already announced once as scanner `bot` attempts, so Discord isn't spammed on repeats |
+| `maps/` | Output of `region_map.py`; regenerate anytime |
 
 ### Secrets
 
 | File | Purpose |
 |---|---|
-| `rcon_password.txt` | Auto-generated RCON password (also written into `../server.properties`); `chmod 600`, gitignored |
-| `discord_webhook_url.txt` | Discord webhook URL for notifications (see above); `chmod 600`, gitignored |
+| `rcon_password.txt` | Auto-generated RCON password (also written into `../server.properties`); `chmod 600` |
+| `discord_webhook_url.txt` | Discord webhook URL for notifications (see above); `chmod 600` |
