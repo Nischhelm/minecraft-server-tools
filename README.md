@@ -129,10 +129,3 @@ done yet.
 | `region_map.py` | Renders per-dimension "recently touched" region maps (see above) |
 | `maps/` | Output of `region_map.py`; gitignored, regenerate anytime |
 | `systemd/mc-server.service`, `systemd/mc-sleepd.service`, `systemd/mc-loginlog.service` | The canonical unit files, symlinked into `~/.config/systemd/user/` |
-
-## Changing behavior
-
-Idle timeout, restart interval, warning timing, sleep MOTD, and the wake-kick
-message are all constants at the top of `config.py` - edit and
-`systemctl --user restart mc-sleepd` to apply. No need to touch `mc_sleepd.py`
-itself for those kinds of tweaks.
