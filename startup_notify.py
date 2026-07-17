@@ -35,7 +35,7 @@ async def main():
         notifier.notify("Server started manually")
 
     if await wait_until_ready():
-        notifier.notify("Server is ready - you can log in now")
+        notifier.notify("Server is ready!")
 
 
 if __name__ == "__main__":

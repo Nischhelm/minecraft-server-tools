@@ -65,3 +65,19 @@ MAP_SCALE = 32  # pixels per region side; 1:1 with a region's 32x32 chunks, so a
 # excluded from the image and reported separately instead.
 MAP_OUTLIER_MAD_MULTIPLIER = 5
 MAP_OUTLIER_MIN_THRESHOLD = 80  # regions; floor so normally-spread-out worlds aren't over-filtered
+
+# --- web_export.py ---
+WEB_DIR = os.path.join(BASE_DIR, "web")  # source (index.html/style.css/app.js), committed
+WEB_DATA_DIR = os.path.join(WEB_DIR, "data")
+WEB_MAPS_DIR = os.path.join(WEB_DATA_DIR, "maps")
+WEB_PERF_HISTORY_DAYS = 3
+# The mod already samples once/minute per dimension - bucket at that same
+# 60s so nothing gets thrown away (this just absorbs multi-dimension jitter
+# within the same minute rather than actually downsampling).
+WEB_PERF_BUCKET_SECONDS = 60
+
+# nginx (running as www-data) can't traverse /home/nischi (mode 750), so the
+# actually-served copy lives in this separate, world-readable directory -
+# web_export.py syncs source + generated data here on every run. One-time
+# setup (`mkdir`/`chown`/`chmod`) is manual, see sleepd/README.md.
+WEB_DEPLOY_DIR = "/var/www/mc-status"

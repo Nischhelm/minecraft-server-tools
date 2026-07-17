@@ -25,6 +25,12 @@ to - and mirrored to Discord. Emitted by the MinecraftServerTool mod
 (sleepd/mod/) as a "[dimchange] player=... from=... to=..." console line on
 PlayerChangedDimensionEvent.
 
+Perf samples (once/minute per dimension, plus one "overall" row) are recorded
+to perf.csv - timestamp, dim, mspt, tps, chunks, entities - not mirrored to
+Discord (too frequent). Emitted by the same mod as "[perf] dim=... mspt=...
+tps=... [chunks=... entities=...]" console lines; the "overall" row has no
+chunks/entities and leaves those columns empty.
+
 Runs independently of mc_sleepd.py's state machine, watching both
 mc-server.service (for the FML "UUID of player" attempt marker, the
 "logged in with entity id" confirmation, chat, and "left the game") and
@@ -35,9 +41,10 @@ never sees since the real FML handshake hasn't started yet).
 import csv
 import datetime
 import os
+import queue
 import re
-import selectors
 import subprocess
+import threading
 import time
 
 import config
@@ -47,6 +54,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "logins.csv")
 CHAT_LOG_FILE = os.path.join(BASE_DIR, "chat.csv")
 DIMENSION_LOG_FILE = os.path.join(BASE_DIR, "dimensions.csv")
+PERF_LOG_FILE = os.path.join(BASE_DIR, "perf.csv")
 KNOWN_BOTS_FILE = os.path.join(BASE_DIR, "known_bots.txt")
 SLEEPD_UNIT = "mc-sleepd.service"
 
@@ -75,6 +83,10 @@ CHAT_RE = re.compile(
 )
 LEAVE_RE = re.compile(r"(?P<name>\S+) left the game")
 DIMCHANGE_RE = re.compile(r"\[dimchange\] player=(?P<name>\S+) from=(?P<from>.+?) to=(?P<to>.+)")
+PERF_RE = re.compile(
+    r"\[perf\] dim=(?P<dim>\S+) mspt=(?P<mspt>[\d.]+) tps=(?P<tps>[\d.]+)"
+    r"(?: chunks=(?P<chunks>\d+) entities=(?P<entities>\d+))?"
+)
 
 # name -> {"since": monotonic time, "ip": str or None, "grace": seconds}
 pending = {}
@@ -96,6 +108,9 @@ def ensure_header():
     if not os.path.exists(DIMENSION_LOG_FILE):
         with open(DIMENSION_LOG_FILE, "w", newline="") as f:
             csv.writer(f).writerow(["timestamp", "player", "from", "to"])
+    if not os.path.exists(PERF_LOG_FILE):
+        with open(PERF_LOG_FILE, "w", newline="") as f:
+            csv.writer(f).writerow(["timestamp", "dim", "mspt", "tps", "chunks", "entities"])
 
 
 def load_known_bots():
@@ -146,6 +161,12 @@ def write_dimension_row(name, from_dim, to_dim):
     notifier.notify(f"{name} moved from {from_dim} to {to_dim}")
 
 
+def write_perf_row(dim, mspt, tps, chunks, entities):
+    timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+    with open(PERF_LOG_FILE, "a", newline="") as f:
+        csv.writer(f).writerow([timestamp, dim, mspt, tps, chunks or "", entities or ""])
+
+
 def handle_line(line):
     match = LOGIN_RE.search(line)
     if match:
@@ -181,6 +202,14 @@ def handle_line(line):
         write_dimension_row(match.group("name"), match.group("from"), match.group("to"))
         return
 
+    match = PERF_RE.search(line)
+    if match:
+        write_perf_row(
+            match.group("dim"), match.group("mspt"), match.group("tps"),
+            match.group("chunks"), match.group("entities"),
+        )
+        return
+
     # Checked before LEAVE_RE: a chat message that literally says "left the
     # game" (e.g. "<Alice> left the game") must not be mistaken for a real
     # leave - the "<name>" bracket syntax only ever appears in chat lines.
@@ -205,22 +234,41 @@ def sweep_pending():
 def main():
     ensure_header()
     load_known_bots()
-    cmd = ["journalctl"]
+    # journalctl block-buffers its stdout once it's not a tty (i.e. always,
+    # piped from here), so lines can sit unflushed for up to a minute before
+    # we see them - stdbuf forces it to line-buffer instead. Only noticed
+    # this once perf.csv's fixed once/minute cadence made the lag obvious;
+    # it was presumably always there for logins/chat too, just less visible.
+    cmd = ["stdbuf", "-oL", "journalctl"]
     if config.SYSTEMD_SCOPE:
         cmd.append(config.SYSTEMD_SCOPE)
     cmd.extend(["-u", config.SYSTEMD_UNIT, "-u", SLEEPD_UNIT, "-f", "-n", "0", "-o", "cat"])
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
-    sel = selectors.DefaultSelector()
-    sel.register(proc.stdout, selectors.EVENT_READ)
+    # A plain select()/selectors loop on proc.stdout doesn't work here: the
+    # underlying BufferedReader can pull several already-written lines into
+    # its own internal buffer on a single OS-level read, so a second line
+    # sitting there is invisible to select() (which only sees the raw fd)
+    # until the *next* unrelated write happens to make the fd readable again
+    # - line 2 then comes out stale, one whole cycle late. A dedicated
+    # reader thread blocking on readline() sidesteps that entirely.
+    lines = queue.Queue()
+
+    def read_lines():
+        for line in iter(proc.stdout.readline, ""):
+            lines.put(line)
+        lines.put(None)  # EOF
+
+    threading.Thread(target=read_lines, daemon=True).start()
 
     while True:
-        events = sel.select(timeout=SWEEP_INTERVAL_SECONDS)
-        if events:
-            line = proc.stdout.readline()
-            if not line:
+        try:
+            line = lines.get(timeout=SWEEP_INTERVAL_SECONDS)
+            if line is None:
                 break
             handle_line(line)
+        except queue.Empty:
+            pass
         sweep_pending()
 
 

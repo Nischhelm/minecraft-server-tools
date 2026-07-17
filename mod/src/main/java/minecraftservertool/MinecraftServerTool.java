@@ -47,7 +47,7 @@ public class MinecraftServerTool {
             int chunks = world.getChunkProvider().getLoadedChunkCount();
             int entities = world.loadedEntityList.size();
 
-            LOGGER.info("[perf] dim={} mspt={} tps={} chunks={} entities={}", dim, format(mspt), format(dimTps), chunks, entities);
+            LOGGER.info("[perf] dim={} mspt={} tps={} chunks={} entities={}", dimensionName(dim), format(mspt), format(dimTps), chunks, entities);
         }
     }
 

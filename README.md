@@ -55,11 +55,13 @@ It reads the password from `rcon_password.txt` automatically. Only works
 while `mc-server` is actually running (RCON comes up once the world has
 loaded, near the end of boot).
 
-## Login, chat, dimension-change & bot-attempt logging
+## Login, chat, dimension-change, perf & bot-attempt logging
 
 `mc-loginlog.service` (`login_logger.py`) tails both `mc-server` and
-`mc-sleepd`'s console output (via journalctl), independent of `mc-sleepd`'s
-own state, and writes three CSVs:
+`mc-sleepd`'s console output (via journalctl, forced line-buffered with
+`stdbuf -oL` - journalctl otherwise block-buffers its stdout once it's not a
+tty, which can delay lines by up to a minute), independent of `mc-sleepd`'s
+own state, and writes four CSVs:
 
 - **`logins.csv`** - `timestamp,player,ip,status`, one row per event. `status` is:
   - `login` - a completed join
@@ -73,16 +75,22 @@ own state, and writes three CSVs:
   change. Emitted as a `[dimchange] player=... from=... to=...` console line
   by the `MinecraftServerTool` mod (see `mod/`) on
   `PlayerChangedDimensionEvent`.
+- **`perf.csv`** - `timestamp,dim,mspt,tps,chunks,entities`, one row per
+  dimension per minute (plus one `dim=overall` row with `chunks`/`entities`
+  left empty). Emitted by the same mod as `[perf] dim=... mspt=... tps=...
+  [chunks=... entities=...]` console lines - meant for building TPS/MSPT
+  graphs (e.g. for the website).
 
 ```bash
 cat ~/minecraft/sleepd/logins.csv
 cat ~/minecraft/sleepd/chat.csv
 cat ~/minecraft/sleepd/dimensions.csv
+cat ~/minecraft/sleepd/perf.csv
 journalctl --user -u mc-loginlog -f   # watch new events live
 ```
 
-Both files only ever append; nothing rotates or trims them, so clean them up
-yourself if they grow large.
+All four files only ever append; nothing rotates or trims them, so clean
+them up yourself if they grow large.
 
 ## Discord notifications
 
@@ -91,6 +99,16 @@ message, dimension change) to a Discord webhook - fully optional, silently does 
 `discord_webhook_url.txt` doesn't exist. To enable it, put the webhook URL as
 the only line in `discord_webhook_url.txt` (`chmod 600`, gitignored - never
 commit it).
+
+`run_server.sh` also fires off `startup_notify.py` in the background on
+every `mc-server` start, regardless of `mc-loginlog`: it tells apart a real
+sleepd-triggered wake (which already gets its own "Server starting up
+(player connecting)" notice from `mc_sleepd.py`, via a marker file
+`wake_server()` drops right before starting the service) from a manual
+`systemctl start` or a crash-restart, posting "Server started manually" for
+those, then polls RCON and posts "Server is ready!" once the world's
+actually loaded and joinable - useful since that can take several minutes
+with this modpack.
 
 `bot` events (server-list scanners) are special-cased: each distinct player
 name is only ever announced on Discord once, tracked in `known_bots.txt`
@@ -105,30 +123,64 @@ generated, colored by how recently each region file was last modified - a
 rough "what's been explored, and how recently" map, not a biome/terrain map.
 Spawn (block 0,0) is marked with a red dot.
 
-Run manually:
+Run manually with `python3 region_map.py`, or automatically as part of
+`web_export.py` (see below) - output goes to `maps/` either way (gitignored
+- regenerated from world data, not source).
 
-```bash
-python3 region_map.py
-```
+## Public status page
 
-Output goes to `maps/` (gitignored - regenerated from world data, not
-source). Sending these to Discord periodically is a planned future step, not
-done yet.
+`web_export.py` builds the public page at **https://nischhelm.com/mc/**
+(note the trailing slash - `/mc` without it 404s, nginx's `alias` only
+matches the exact prefix): one section per dimension with its `region_map.py`
+image and TPS/MSPT charts built from `perf.csv`, plus an "overall" section.
+`run_server.sh` backgrounds it (alongside `startup_notify.py`) on every
+`mc-server` start, so no separate timer is needed - region maps and perf
+charts regenerate on every restart/wake.
+
+Layout:
+
+- `web/` - source, committed: `index.html`, `style.css`, `app.js` (vanilla,
+  no build step, no external dependencies - fetches `data/perf.json`
+  client-side and draws the charts as inline SVG).
+- `web/data/` - generated, gitignored: `perf.json` (perf.csv downsampled to
+  one point/minute/dimension, last `config.WEB_PERF_HISTORY_DAYS` days) and
+  `maps/*.png` (copied from `../maps/`).
+- **`/var/www/mc-status`** - the actually-served copy. nginx runs as
+  `www-data`, which can't traverse `/home/nischi` (mode `750`) at all, so
+  `web_export.py`'s last step syncs all of `web/` (source + freshly
+  generated `data/`) here every run. One-time setup, not automated (needs
+  root):
+  ```bash
+  sudo mkdir -p /var/www/mc-status
+  sudo chown nischi:nischi /var/www/mc-status
+  sudo chmod 755 /var/www/mc-status
+  ```
+  plus a `location /mc/ { alias /var/www/mc-status/; try_files $uri $uri/ =404; }`
+  block added to `/etc/nginx/sites-available/nischhelm`'s `443 ssl` server
+  block, then `sudo nginx -t && sudo systemctl reload nginx`. After that,
+  `web_export.py` never needs sudo again - it just writes into a directory
+  it already owns.
+
+Dimension names from the mod's perf lines (`overworld`, `the_nether`, ...)
+and `region_map.py`'s own labels (`overworld`, `nether`, ...) are matched up
+by normalizing both (lowercase, strip a `the_` prefix, drop any `mod:`
+namespace prefix) rather than a hand-maintained ID table.
 
 ## MinecraftServerTool mod
 
 `mod/` is a small standalone Forge mod (Gradle project, not built/installed
-automatically - see its own directory for the build). It emits two kinds of
-plain console lines that `login_logger.py` picks up:
+automatically - see its own directory for the build). Its `@Mod` annotation
+sets `acceptableRemoteVersions = "*"` so vanilla clients (without the mod)
+can still connect. It emits two kinds of plain console lines that
+`login_logger.py` picks up:
 
 - `[dimchange] player=... from=... to=...` on `PlayerChangedDimensionEvent`
-  - consumed today, see above (`dimensions.csv` + Discord).
+  - consumed as `dimensions.csv` + Discord, see above.
 - `[perf] dim=... mspt=... tps=... chunks=... entities=...` once a minute per
   dimension (plus one `dim=overall` line) - TPS/MSPT from
   `MinecraftServer.tickTimeArray`/`worldTickTimes`, loaded chunk count from
   `WorldServer.getChunkProvider().getLoadedChunkCount()`, loaded entity count
-  from `WorldServer.loadedEntityList` - **not consumed on the Python side
-  yet**, that's a future step.
+  from `WorldServer.loadedEntityList` - consumed as `perf.csv`, see above.
 
 Build with `./gradlew build` from `mod/` (needs the Forge 1.12.2 toolchain,
 first run downloads and decompiles Minecraft - can take 10+ minutes), then
@@ -145,10 +197,13 @@ copy the resulting jar from `mod/build/libs/` into `../mods/`.
 | `rcon.py` | Minimal Source RCON client, used internally by `mc_sleepd.py` |
 | `rcon_cli.py` | Standalone command-line tool for sending yourself RCON commands (see above) |
 | `config.py` | All the tunable settings: ports, timeouts (20 min idle / 6h restart), messages, RCON/Discord paths |
-| `run_server.sh` | The actual `java ...` invocation used as `mc-server.service`'s `ExecStart` |
-| `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv`, every chat message to `chat.csv`, every dimension change to `dimensions.csv` |
-| `notifier.py` | Posts login-logger events to a Discord webhook, if configured |
+| `run_server.sh` | The actual `java ...` invocation used as `mc-server.service`'s `ExecStart`; also backgrounds `startup_notify.py` and `web_export.py` |
+| `startup_notify.py` | Posts "started manually" / "ready" Discord notices for every `mc-server` start, see above |
+| `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv`, every chat message to `chat.csv`, every dimension change to `dimensions.csv`, every perf sample to `perf.csv` |
+| `notifier.py` | Posts login-logger and startup events to a Discord webhook, if configured |
 | `region_map.py` | Renders per-dimension "recently touched" region maps (see above) |
+| `web_export.py` | Builds the public status page (see above): runs `region_map.py`, downsamples `perf.csv` to `web/data/perf.json`, syncs everything to `/var/www/mc-status` |
+| `web/` | Public status page: `index.html`/`style.css`/`app.js` source (committed) + `data/` (generated, gitignored) |
 | `mod/` | `MinecraftServerTool` Forge mod source (Gradle project, see above) |
 | `systemd/mc-server.service`, `systemd/mc-sleepd.service`, `systemd/mc-loginlog.service` | The canonical unit files, symlinked into `~/.config/systemd/user/` |
 
@@ -156,8 +211,9 @@ copy the resulting jar from `mod/build/libs/` into `../mods/`.
 
 | File | Purpose |
 |---|---|
-| `logins.csv`, `chat.csv`, `dimensions.csv` | The login/chat/dimension-change history itself (see above); grows locally |
+| `logins.csv`, `chat.csv`, `dimensions.csv`, `perf.csv` | The login/chat/dimension-change/perf history itself (see above); grows locally |
 | `known_bots.txt` | Player names already announced once as scanner `bot` attempts, so Discord isn't spammed on repeats |
+| `.sleepd_wake_marker` | Transient - dropped by `mc_sleepd.py` right before a wake-triggered start, deleted by `run_server.sh` on read; only ever exists for the few seconds between those two |
 | `maps/` | Output of `region_map.py`; regenerate anytime |
 
 ### Secrets

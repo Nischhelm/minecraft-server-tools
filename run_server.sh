@@ -7,6 +7,7 @@ SLEEPD_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SLEEPD_DIR/.."
 
 python3 "$SLEEPD_DIR/startup_notify.py" &
+python3 "$SLEEPD_DIR/web_export.py" &
 
 exec java -Dforge.logging.console.level=info -Dmixin.debug.export=true -Xms5G -Xmx5G \
     -XX:SurvivorRatio=32 -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 \
