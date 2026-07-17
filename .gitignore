@@ -3,3 +3,4 @@ rcon_password.txt
 discord_webhook_url.txt
 *.csv
 maps/
+known_bots.txt
