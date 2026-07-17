@@ -191,6 +191,12 @@ entirely. `login_logger.py` writes `data/live.json` directly into
 during its normal sweep, independent of `mc_sleepd.py`'s own state tracking.
 `app.js` polls it every 15s.
 
+`live.json`'s `updated_at` doubles as an "asleep since" timestamp: it's only
+rewritten when the awake state itself flips, or on a login/leave - and while
+asleep there are no logins/leaves to bump it - so `app.js` shows "Server is
+asleep (Xh Ym) - join to wake it up." on the page using it, rather than
+just a bare asleep/awake dot.
+
 **Exact player coordinates are never written anywhere, public or otherwise.**
 `login_logger.py` converts each `[playerpos] player=... dim=... x=... y=...
 z=...` line into an approximate on-map percentage position (using

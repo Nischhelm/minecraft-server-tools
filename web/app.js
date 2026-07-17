@@ -244,7 +244,12 @@ function renderLiveStatus(live, colors) {
     return;
   }
   if (!live.awake) {
-    el.innerHTML = '<span class="dot asleep"></span> Server is asleep - join to wake it up.';
+    // updated_at only moves while asleep when the awake state itself last
+    // flipped (write_live_status() isn't called for player events while
+    // there's nobody online to log in/out) - so it doubles as "asleep since".
+    const asleepFor = live.updated_at ? formatElapsed(Math.max(0, Date.now() - new Date(live.updated_at).getTime())) : null;
+    const suffix = asleepFor ? ` (${asleepFor})` : "";
+    el.innerHTML = `<span class="dot asleep"></span> Server is asleep${suffix} - join to wake it up.`;
     el.className = "live-status asleep";
     return;
   }
