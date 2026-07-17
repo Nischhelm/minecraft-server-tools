@@ -23,34 +23,25 @@ Three systemd **user** units are involved:
 All commands below use `systemctl --user` (not plain `systemctl`) because
 these are user-level units.
 
-## Everyday commands
+## Managing the services
 
-| What | Command |
-|---|---|
-| Check what's currently happening | `systemctl --user status mc-sleepd` |
-| Watch the sleep/wake daemon live | `journalctl --user -u mc-sleepd -f` |
-| Watch the Minecraft server console live | `journalctl --user -u mc-server -f` |
-| Manually stop the Minecraft server (saves + exits cleanly) | `systemctl --user stop mc-server` |
-| Manually start the Minecraft server right now (skip waiting for a login) | `systemctl --user start mc-server` |
-| Manually force a restart right now | `systemctl --user restart mc-server` |
+Standard `systemctl --user` subcommands (`status`, `start`, `stop`,
+`restart`, `enable`/`disable` for autostart at boot) and
+`journalctl --user -u <unit> -f` (live logs) all work against any of the
+three units above.
 
-`stop`/`start`/`restart` on `mc-server` are safe to run yourself any time -
-`mc-sleepd` just reacts to whatever state it finds (goes back to sleep once
-the server stops, does nothing if you start it directly).
+A few things worth knowing:
 
-## Turning the whole sleep/wake system on or off
-
-| What | Command |
-|---|---|
-| Pause everything (server won't wake on join anymore, current server keeps running if it's up) | `systemctl --user stop mc-sleepd` |
-| Resume it | `systemctl --user start mc-sleepd` |
-| Disable autostart at boot (survives until you re-enable) | `systemctl --user disable mc-sleepd` |
-| Re-enable autostart at boot | `systemctl --user enable --now mc-sleepd` |
-| Fully undo the boot-persistence (only if you want the whole thing gone) | `loginctl disable-linger $USER` |
-
-If you disable `mc-sleepd` entirely and want the server reachable the old
-way, start it directly with `systemctl --user start mc-server` (or fall back
-to the original `../startup.sh` in a tmux session - untouched, still works).
+- `stop`/`start`/`restart` on `mc-server` are safe to run directly any time -
+  `mc-sleepd` just reacts to whatever state it finds (goes back to sleep once
+  the server stops, does nothing if you start it directly).
+- Stopping/disabling `mc-sleepd` pauses the whole sleep/wake system (the
+  server won't auto-wake on join anymore, but a currently-running server
+  keeps running); `loginctl disable-linger $USER` additionally undoes the
+  boot-persistence entirely.
+- If you disable `mc-sleepd` and want the server reachable the old way,
+  start it directly with `systemctl --user start mc-server` (or fall back
+  to the original `../startup.sh` in a tmux session - untouched, still works).
 
 ## Talking to the running server (RCON)
 
