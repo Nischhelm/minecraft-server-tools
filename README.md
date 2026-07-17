@@ -4,10 +4,9 @@
 server (`mc-server.service`) on demand instead of 24/7: sleeping when
 nobody's around, waking on a real join attempt, sleeping again after 20
 minutes with no players, and force-restarting every 6 hours with an in-game
-warning. See `/home/nischi/.claude/plans/zippy-sleeping-muffin.md` for the
-original design rationale.
+warning.
 
-Players connect via `nischhelm.com` - no port needed, the server runs on
+Players connect without needing to specify a port - the server runs on
 Minecraft's default port 25565 (`server-port` in `../server.properties`,
 `MC_PORT` in `config.py`).
 
@@ -18,7 +17,7 @@ Three systemd **user** units are involved:
 - **`mc-server.service`** - the actual Java/Forge server. Started and stopped
   automatically by `mc-sleepd`; you normally never touch this by hand. Has
   `CPUWeight=300`/`IOWeight=300` (vs. the default 100) so it's prioritized
-  over the Nextcloud stack (`snap.nextcloud.*.service`) that shares this host.
+  over other services sharing this host.
 - **`mc-loginlog.service`** - independent login/chat/bot-attempt logger, see below.
 
 All commands below use `systemctl --user` (not plain `systemctl`) because
@@ -47,7 +46,7 @@ the server stops, does nothing if you start it directly).
 | Resume it | `systemctl --user start mc-sleepd` |
 | Disable autostart at boot (survives until you re-enable) | `systemctl --user disable mc-sleepd` |
 | Re-enable autostart at boot | `systemctl --user enable --now mc-sleepd` |
-| Fully undo the boot-persistence (only if you want the whole thing gone) | `loginctl disable-linger nischi` |
+| Fully undo the boot-persistence (only if you want the whole thing gone) | `loginctl disable-linger $USER` |
 
 If you disable `mc-sleepd` entirely and want the server reachable the old
 way, start it directly with `systemctl --user start mc-server` (or fall back
@@ -61,7 +60,7 @@ No need to install `mcrcon` or anything else - there's a tiny built-in CLI:
 cd ~/minecraft/sleepd
 python3 rcon_cli.py list
 python3 rcon_cli.py say Hello everyone!
-python3 rcon_cli.py "give Nischhelm minecraft:diamond 5"
+python3 rcon_cli.py "give PlayerName minecraft:diamond 5"
 ```
 
 It reads the password from `rcon_password.txt` automatically. Only works
