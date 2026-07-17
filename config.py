@@ -53,7 +53,7 @@ MAP_DIMENSIONS = (
     ("end", "DIM1/region"),
     ("lost_cities", "LOST/region"),
 )
-MAP_SCALE = 3  # pixels per region side, so single regions are visible
+MAP_SCALE = 32  # pixels per region side; 1:1 with a region's 32x32 chunks, so a future chunk-level view can subdivide each pixel
 # Robust (median/MAD-based) outlier rejection - some region files end up with
 # wild coordinates from mob/entity position bugs (seen: r.4194303.4194303.mca).
 # Those would blow up the bounding box to millions of pixels, so they're

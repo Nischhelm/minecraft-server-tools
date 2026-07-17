@@ -34,10 +34,16 @@ FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 TITLE_FONT = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
 BODY_FONT = os.path.join(FONT_DIR, "DejaVuSans.ttf")
 
+# UI chrome (padding, fonts, legend) is sized relative to MAP_SCALE so it
+# stays legible - these constants were tuned by eye at the old MAP_SCALE=3;
+# UI_SCALE_REF preserves that same look as MAP_SCALE changes.
+UI_SCALE_REF = 3
 PAD = 12
 TITLE_HEIGHT = 30
 SUBTITLE_LINE_HEIGHT = 16
 LEGEND_HEIGHT = 60
+TITLE_FONT_SIZE = 20
+BODY_FONT_SIZE = 13
 
 
 def parse_region_coords(region_dir):
@@ -92,6 +98,14 @@ def _age_color(mtime, min_mtime, max_mtime):
 
 def render_map(label, main_cluster, output_path, outlier_count=0, scale=None):
     scale = scale or config.MAP_SCALE
+    ui_scale = max(1.0, scale / UI_SCALE_REF)
+    pad = round(PAD * ui_scale)
+    title_height = round(TITLE_HEIGHT * ui_scale)
+    subtitle_line_height = round(SUBTITLE_LINE_HEIGHT * ui_scale)
+    legend_height = round(LEGEND_HEIGHT * ui_scale)
+    title_font_size = round(TITLE_FONT_SIZE * ui_scale)
+    body_font_size = round(BODY_FONT_SIZE * ui_scale)
+
     xs = [c[0] for c in main_cluster]
     zs = [c[1] for c in main_cluster]
     mtimes = [c[3] for c in main_cluster]
@@ -104,8 +118,8 @@ def render_map(label, main_cluster, output_path, outlier_count=0, scale=None):
     map_width = width_regions * scale
     map_height = height_regions * scale
 
-    title_font = ImageFont.truetype(TITLE_FONT, 20)
-    body_font = ImageFont.truetype(BODY_FONT, 13)
+    title_font = ImageFont.truetype(TITLE_FONT, title_font_size)
+    body_font = ImageFont.truetype(BODY_FONT, body_font_size)
     title_text = label.replace("_", " ").upper()
     # One item per line rather than one long joined line - these images are
     # often small (Nether/End/etc.), where a single "a | b | c | d" line would
@@ -120,7 +134,7 @@ def render_map(label, main_cluster, output_path, outlier_count=0, scale=None):
     ]
     if outlier_count:
         subtitle_lines.append(f"{outlier_count} outlier(s) excluded")
-    subtitle_height = len(subtitle_lines) * SUBTITLE_LINE_HEIGHT + 6
+    subtitle_height = len(subtitle_lines) * subtitle_line_height + round(6 * ui_scale)
 
     # Small maps (Nether/End/etc.) can be narrower than their own title text -
     # widen the canvas to fit whichever is widest, map stays left-aligned.
@@ -130,8 +144,8 @@ def render_map(label, main_cluster, output_path, outlier_count=0, scale=None):
         max(round(body_font.getlength(line)) for line in subtitle_lines),
     )
 
-    canvas_width = content_width + 2 * PAD
-    canvas_height = TITLE_HEIGHT + subtitle_height + map_height + LEGEND_HEIGHT + 2 * PAD
+    canvas_width = content_width + 2 * pad
+    canvas_height = title_height + subtitle_height + map_height + legend_height + 2 * pad
 
     img = Image.new("RGB", (canvas_width, canvas_height), FRAME_COLOR)
     map_img = Image.new("RGB", (map_width, map_height), MAP_BACKGROUND_COLOR)
@@ -145,15 +159,16 @@ def render_map(label, main_cluster, output_path, outlier_count=0, scale=None):
             for dz in range(scale):
                 map_pixels[px + dx, pz + dz] = color
 
-    map_offset = (PAD, PAD + TITLE_HEIGHT + subtitle_height)
+    map_offset = (pad, pad + title_height + subtitle_height)
     img.paste(map_img, map_offset)
 
     draw = ImageDraw.Draw(img)
     # Thin outline so the map area reads as a distinct "window" in the frame.
+    outline_width = max(1, round(ui_scale))
     draw.rectangle(
-        [map_offset[0] - 1, map_offset[1] - 1, map_offset[0] + map_width, map_offset[1] + map_height],
+        [map_offset[0] - outline_width, map_offset[1] - outline_width, map_offset[0] + map_width, map_offset[1] + map_height],
         outline=(110, 113, 122),
-        width=1,
+        width=outline_width,
     )
 
     # Spawn marker (block 0,0), if within the mapped bounds.
@@ -163,20 +178,21 @@ def render_map(label, main_cluster, output_path, outlier_count=0, scale=None):
         r = max(scale, 4)
         draw.ellipse([spawn_px - r, spawn_py - r, spawn_px + r, spawn_py + r], fill=SPAWN_COLOR, outline=(0, 0, 0))
 
-    draw.text((PAD, PAD - 2), title_text, font=title_font, fill=(255, 255, 255))
+    draw.text((pad, pad - round(2 * ui_scale)), title_text, font=title_font, fill=(255, 255, 255))
     for i, line in enumerate(subtitle_lines):
-        draw.text((PAD, PAD + TITLE_HEIGHT + i * SUBTITLE_LINE_HEIGHT), line, font=body_font, fill=(190, 190, 190))
+        draw.text((pad, pad + title_height + i * subtitle_line_height), line, font=body_font, fill=(190, 190, 190))
 
     # Age legend: a horizontal gradient bar with oldest/newest dates.
-    legend_y = PAD + TITLE_HEIGHT + subtitle_height + map_height + 8
-    legend_width = min(240, content_width)
+    legend_bar_height = round(14 * ui_scale)
+    legend_y = pad + title_height + subtitle_height + map_height + round(8 * ui_scale)
+    legend_width = min(round(240 * ui_scale), content_width)
     for i in range(legend_width):
         color = _lerp_color(OLD_COLOR, NEW_COLOR, i / max(1, legend_width - 1))
-        draw.line([(PAD + i, legend_y), (PAD + i, legend_y + 14)], fill=color)
+        draw.line([(pad + i, legend_y), (pad + i, legend_y + legend_bar_height)], fill=color)
     oldest_label = datetime.datetime.fromtimestamp(min_mtime).strftime("%Y-%m-%d")
     newest_label = datetime.datetime.fromtimestamp(max_mtime).strftime("%Y-%m-%d")
-    draw.text((PAD, legend_y + 18), f"oldest: {oldest_label}", font=body_font, fill=(190, 190, 190))
-    draw.text((PAD, legend_y + 32), f"newest: {newest_label}", font=body_font, fill=(190, 190, 190))
+    draw.text((pad, legend_y + legend_bar_height + round(4 * ui_scale)), f"oldest: {oldest_label}", font=body_font, fill=(190, 190, 190))
+    draw.text((pad, legend_y + legend_bar_height + round(18 * ui_scale)), f"newest: {newest_label}", font=body_font, fill=(190, 190, 190))
 
     img.save(output_path)
     return width_regions, height_regions
