@@ -20,6 +20,11 @@ In-game chat is recorded separately to chat.csv - timestamp, player, message
 - and also mirrored to Discord (unlike logins.csv, chat volume doesn't get a
 grace-period/dedup treatment - each message is its own row).
 
+Dimension changes are recorded to dimensions.csv - timestamp, player, from,
+to - and mirrored to Discord. Emitted by the MinecraftServerTool mod
+(sleepd/mod/) as a "[dimchange] player=... from=... to=..." console line on
+PlayerChangedDimensionEvent.
+
 Runs independently of mc_sleepd.py's state machine, watching both
 mc-server.service (for the FML "UUID of player" attempt marker, the
 "logged in with entity id" confirmation, chat, and "left the game") and
@@ -41,6 +46,7 @@ import notifier
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "logins.csv")
 CHAT_LOG_FILE = os.path.join(BASE_DIR, "chat.csv")
+DIMENSION_LOG_FILE = os.path.join(BASE_DIR, "dimensions.csv")
 KNOWN_BOTS_FILE = os.path.join(BASE_DIR, "known_bots.txt")
 SLEEPD_UNIT = "mc-sleepd.service"
 
@@ -57,8 +63,18 @@ BOT_ATTEMPT_RE = re.compile(
 )
 UUID_RE = re.compile(r"UUID of player (?P<name>\S+) is")
 LOGIN_RE = re.compile(r"(?P<name>\S+)\[/(?P<ip>[0-9a-fA-F:.]+):(?P<port>\d+)\] logged in with entity id")
-CHAT_RE = re.compile(r"<(?P<name>\S+)> (?P<message>.+)")
+# Anchored to the standard log4j prefix (timestamp, thread/level, optional
+# named-logger marker) with the player name immediately after it - real chat
+# lines always look exactly like this. A looser "<x> rest of line" pattern
+# also matched unrelated startup noise that happens to contain <angle
+# brackets> (the Mixin subsystem's banner, ASM/bytecode debug dumps like
+# "BlockPistonStructureHelper.<init> (Lnet/...)V"), which isn't preceded by
+# a log prefix or has other text before the bracketed token.
+CHAT_RE = re.compile(
+    r"^\[\d\d:\d\d:\d\d\] \[[^\]]+\](?: \[[^\]]+\])?: <(?P<name>[A-Za-z0-9_]{3,16})> (?P<message>.+)$"
+)
 LEAVE_RE = re.compile(r"(?P<name>\S+) left the game")
+DIMCHANGE_RE = re.compile(r"\[dimchange\] player=(?P<name>\S+) from=(?P<from>.+?) to=(?P<to>.+)")
 
 # name -> {"since": monotonic time, "ip": str or None, "grace": seconds}
 pending = {}
@@ -77,6 +93,9 @@ def ensure_header():
     if not os.path.exists(CHAT_LOG_FILE):
         with open(CHAT_LOG_FILE, "w", newline="") as f:
             csv.writer(f).writerow(["timestamp", "player", "message"])
+    if not os.path.exists(DIMENSION_LOG_FILE):
+        with open(DIMENSION_LOG_FILE, "w", newline="") as f:
+            csv.writer(f).writerow(["timestamp", "player", "from", "to"])
 
 
 def load_known_bots():
@@ -119,6 +138,14 @@ def write_chat_row(name, message):
     notifier.notify(f"<{name}> {message}")
 
 
+def write_dimension_row(name, from_dim, to_dim):
+    timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+    with open(DIMENSION_LOG_FILE, "a", newline="") as f:
+        csv.writer(f).writerow([timestamp, name, from_dim, to_dim])
+    print(f"{timestamp} dimchange: {name} {from_dim} -> {to_dim}", flush=True)
+    notifier.notify(f"{name} moved from {from_dim} to {to_dim}")
+
+
 def handle_line(line):
     match = LOGIN_RE.search(line)
     if match:
@@ -147,6 +174,11 @@ def handle_line(line):
         name = match.group("name")
         if name not in pending:
             pending[name] = {"since": time.monotonic(), "ip": None, "grace": RUNNING_ATTEMPT_GRACE_SECONDS}
+        return
+
+    match = DIMCHANGE_RE.search(line)
+    if match:
+        write_dimension_row(match.group("name"), match.group("from"), match.group("to"))
         return
 
     # Checked before LEAVE_RE: a chat message that literally says "left the

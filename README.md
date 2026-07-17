@@ -55,11 +55,11 @@ It reads the password from `rcon_password.txt` automatically. Only works
 while `mc-server` is actually running (RCON comes up once the world has
 loaded, near the end of boot).
 
-## Login, chat & bot-attempt logging
+## Login, chat, dimension-change & bot-attempt logging
 
 `mc-loginlog.service` (`login_logger.py`) tails both `mc-server` and
 `mc-sleepd`'s console output (via journalctl), independent of `mc-sleepd`'s
-own state, and writes two CSVs:
+own state, and writes three CSVs:
 
 - **`logins.csv`** - `timestamp,player,ip,status`, one row per event. `status` is:
   - `login` - a completed join
@@ -69,10 +69,15 @@ own state, and writes two CSVs:
     waking the server
   - `leave` - a player disconnecting
 - **`chat.csv`** - `timestamp,player,message`, one row per in-game chat message.
+- **`dimensions.csv`** - `timestamp,player,from,to`, one row per dimension
+  change. Emitted as a `[dimchange] player=... from=... to=...` console line
+  by the `MinecraftServerTool` mod (see `mod/`) on
+  `PlayerChangedDimensionEvent`.
 
 ```bash
 cat ~/minecraft/sleepd/logins.csv
 cat ~/minecraft/sleepd/chat.csv
+cat ~/minecraft/sleepd/dimensions.csv
 journalctl --user -u mc-loginlog -f   # watch new events live
 ```
 
@@ -82,7 +87,7 @@ yourself if they grow large.
 ## Discord notifications
 
 `notifier.py` mirrors every login-logger event (login, leave, attempt, chat
-message) to a Discord webhook - fully optional, silently does nothing if
+message, dimension change) to a Discord webhook - fully optional, silently does nothing if
 `discord_webhook_url.txt` doesn't exist. To enable it, put the webhook URL as
 the only line in `discord_webhook_url.txt` (`chmod 600`, gitignored - never
 commit it).
@@ -110,6 +115,25 @@ Output goes to `maps/` (gitignored - regenerated from world data, not
 source). Sending these to Discord periodically is a planned future step, not
 done yet.
 
+## MinecraftServerTool mod
+
+`mod/` is a small standalone Forge mod (Gradle project, not built/installed
+automatically - see its own directory for the build). It emits two kinds of
+plain console lines that `login_logger.py` picks up:
+
+- `[dimchange] player=... from=... to=...` on `PlayerChangedDimensionEvent`
+  - consumed today, see above (`dimensions.csv` + Discord).
+- `[perf] dim=... mspt=... tps=... chunks=... entities=...` once a minute per
+  dimension (plus one `dim=overall` line) - TPS/MSPT from
+  `MinecraftServer.tickTimeArray`/`worldTickTimes`, loaded chunk count from
+  `WorldServer.getChunkProvider().getLoadedChunkCount()`, loaded entity count
+  from `WorldServer.loadedEntityList` - **not consumed on the Python side
+  yet**, that's a future step.
+
+Build with `./gradlew build` from `mod/` (needs the Forge 1.12.2 toolchain,
+first run downloads and decompiles Minecraft - can take 10+ minutes), then
+copy the resulting jar from `mod/build/libs/` into `../mods/`.
+
 ## What each file does
 
 ### Scripts
@@ -122,16 +146,17 @@ done yet.
 | `rcon_cli.py` | Standalone command-line tool for sending yourself RCON commands (see above) |
 | `config.py` | All the tunable settings: ports, timeouts (20 min idle / 6h restart), messages, RCON/Discord paths |
 | `run_server.sh` | The actual `java ...` invocation used as `mc-server.service`'s `ExecStart` |
-| `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv` and every chat message to `chat.csv` |
+| `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv`, every chat message to `chat.csv`, every dimension change to `dimensions.csv` |
 | `notifier.py` | Posts login-logger events to a Discord webhook, if configured |
 | `region_map.py` | Renders per-dimension "recently touched" region maps (see above) |
+| `mod/` | `MinecraftServerTool` Forge mod source (Gradle project, see above) |
 | `systemd/mc-server.service`, `systemd/mc-sleepd.service`, `systemd/mc-loginlog.service` | The canonical unit files, symlinked into `~/.config/systemd/user/` |
 
 ### Auto-generated files
 
 | File | Purpose |
 |---|---|
-| `logins.csv`, `chat.csv` | The login/chat history itself (see above); grows locally |
+| `logins.csv`, `chat.csv`, `dimensions.csv` | The login/chat/dimension-change history itself (see above); grows locally |
 | `known_bots.txt` | Player names already announced once as scanner `bot` attempts, so Discord isn't spammed on repeats |
 | `maps/` | Output of `region_map.py`; regenerate anytime |
 
