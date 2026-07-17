@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically rebuild the public Minecraft status page
+
+[Timer]
+# run_server.sh already triggers one export right at boot/wake - stagger the
+# first periodic run so it isn't a near-duplicate of that.
+OnBootSec=15min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

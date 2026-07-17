@@ -81,3 +81,11 @@ WEB_PERF_BUCKET_SECONDS = 60
 # web_export.py syncs source + generated data here on every run. One-time
 # setup (`mkdir`/`chown`/`chmod`) is manual, see sleepd/README.md.
 WEB_DEPLOY_DIR = "/var/www/mc-status"
+WEB_LIVE_STATUS_FILE = os.path.join(WEB_DEPLOY_DIR, "data", "live.json")
+
+# Internal only (never published) - region_map.py's image layout per
+# dimension, written by web_export.py on every mc-server (re)start and read
+# by login_logger.py to turn a live player's raw block x/z into an
+# approximate on-map percentage position without ever exposing the exact
+# coordinates publicly.
+MAP_LAYOUT_FILE = os.path.join(BASE_DIR, "map_layout.json")

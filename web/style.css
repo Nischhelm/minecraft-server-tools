@@ -32,7 +32,7 @@ body {
   line-height: 1.4;
 }
 
-header, main, footer {
+header, main, footer, .live-status, .leaderboard {
   max-width: 1100px;
   margin: 0 auto;
   padding: 0 20px;
@@ -41,6 +41,81 @@ header, main, footer {
 header {
   padding-top: 40px;
   padding-bottom: 8px;
+}
+
+.live-status {
+  display: block;
+  margin-top: 12px;
+  font-size: 0.95rem;
+}
+
+.live-status .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.live-status .dot.awake { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.live-status .dot.asleep { background: var(--text-dim); }
+
+.player-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 14px;
+}
+
+.player-chip .swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.leaderboard {
+  margin-top: 20px;
+}
+
+.leaderboard h2 {
+  font-size: 1rem;
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.leaderboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.leaderboard-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.leaderboard-list .player {
+  min-width: 120px;
+}
+
+.leaderboard-list .hours {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 50px;
+}
+
+.leaderboard-list .last-login {
+  color: var(--text-dim);
+  font-size: 0.8rem;
 }
 
 h1 {
@@ -82,8 +157,16 @@ main {
   align-items: start;
 }
 
+.dim-body.no-map-layout {
+  grid-template-columns: 1fr;
+}
+
 @media (max-width: 700px) {
   .dim-body { grid-template-columns: 1fr; }
+}
+
+.map-col {
+  position: relative;
 }
 
 .map-col img {
@@ -92,6 +175,18 @@ main {
   border-radius: 6px;
   border: 1px solid var(--border);
   display: block;
+}
+
+.player-dot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff4d4d;
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
 }
 
 .no-map {
@@ -134,7 +229,8 @@ main {
 
 .chart-wrap svg {
   width: 100%;
-  height: 130px;
+  height: auto;
+  aspect-ratio: 600 / 140;
   display: block;
 }
 

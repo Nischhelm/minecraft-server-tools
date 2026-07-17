@@ -1,19 +1,21 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RLCraft Server Status</title>
+<title>Minecraft Server Status</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1>RLCraft Server Status</h1>
-  <p class="meta" id="generated-at">lädt…</p>
+  <h1>Minecraft Server Status</h1>
+  <p class="meta" id="generated-at">loading…</p>
 </header>
+<section id="live-status" class="live-status">loading…</section>
+<section id="leaderboard" class="leaderboard"></section>
 <main id="dimensions"></main>
 <footer>
-  <p>Region-Karten und Performance-Daten aktualisieren sich automatisch alle 15 Minuten.</p>
+  <p>Region maps and performance charts update on every server start/restart. Online status and player positions update continuously.</p>
 </footer>
 <script src="app.js"></script>
 </body>

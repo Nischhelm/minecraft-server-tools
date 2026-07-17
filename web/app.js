@@ -1,7 +1,14 @@
 const DATA_URL = "data/perf.json";
+const LIVE_URL = "data/live.json";
+const LIVE_POLL_MS = 15000;
 const CHART_WIDTH = 600;
-const CHART_HEIGHT = 130;
-const PAD = { top: 8, right: 8, bottom: 18, left: 30 };
+const CHART_HEIGHT = 140;
+const PAD = { top: 8, right: 8, bottom: 26, left: 30 };
+
+// label -> map-col element, filled in as dimension sections render, so
+// fetchLive()'s periodic updates can place player dots without re-rendering
+// the whole page.
+const mapCols = {};
 
 function tpsClass(tps) {
   if (tps == null) return "";
@@ -14,15 +21,30 @@ function fmt(value, digits = 1) {
   return value == null ? "–" : value.toFixed(digits);
 }
 
+// Relative to the chart's own oldest point (0 = start of the visible
+// window), counting up left-to-right - matches how the line itself reads.
+function formatElapsed(elapsedMs) {
+  const totalMinutes = Math.round(elapsedMs / 60000);
+  if (totalMinutes <= 0) return "0m";
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 function buildScales(points, field, fixedMax) {
   const values = points.map((p) => p[field]).filter((v) => v != null);
   const min = 0;
   const max = fixedMax ?? Math.max(1, ...values);
   const times = points.map((p) => p.t);
+  const tMin = Math.min(...times);
+  const tMax = Math.max(...times);
+  const tSpan = Math.max(1, tMax - tMin);
   return {
-    min, max,
-    tMin: Math.min(...times), tMax: Math.max(...times),
-    x: (t) => PAD.left + ((t - Math.min(...times)) / Math.max(1, Math.max(...times) - Math.min(...times))) * (CHART_WIDTH - PAD.left - PAD.right),
+    min, max, tMin, tMax,
+    x: (t) => PAD.left + ((t - tMin) / tSpan) * (CHART_WIDTH - PAD.left - PAD.right),
     y: (v) => CHART_HEIGHT - PAD.bottom - ((v - min) / (max - min)) * (CHART_HEIGHT - PAD.top - PAD.bottom),
   };
 }
@@ -30,7 +52,6 @@ function buildScales(points, field, fixedMax) {
 function lineChart(points, field, color, fixedMax) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`);
-  svg.setAttribute("preserveAspectRatio", "none");
 
   const usable = points.filter((p) => p[field] != null);
   if (usable.length < 2) {
@@ -40,14 +61,14 @@ function lineChart(points, field, color, fixedMax) {
     text.setAttribute("text-anchor", "middle");
     text.setAttribute("fill", "var(--text-dim)");
     text.setAttribute("font-size", "12");
-    text.textContent = "noch keine Daten";
+    text.textContent = "no data yet";
     svg.appendChild(text);
     return svg;
   }
 
   const scale = buildScales(usable, field, fixedMax);
 
-  // horizontal gridlines at 0/50/100%
+  // horizontal gridlines at 0/50/100%, with y-axis value labels
   for (const frac of [0, 0.5, 1]) {
     const y = scale.y(scale.min + frac * (scale.max - scale.min));
     const line = document.createElementNS(svg.namespaceURI, "line");
@@ -64,9 +85,47 @@ function lineChart(points, field, color, fixedMax) {
     label.setAttribute("y", y + 3);
     label.setAttribute("font-size", "9");
     label.setAttribute("fill", "var(--text-dim)");
-    label.textContent = Math.round(scale.min + frac * (scale.max - scale.min));
+    const axisValue = scale.min + frac * (scale.max - scale.min);
+    // Below max=10, integer rounding collapses distinct ticks onto the same
+    // label (e.g. a 0-1 mspt range rounding 0.5 and 1 both to "1") - show a
+    // decimal in that range instead.
+    label.textContent = scale.max < 10 ? axisValue.toFixed(1) : Math.round(axisValue);
     svg.appendChild(label);
   }
+
+  // x-axis ticks: evenly spaced timestamps with a short vertical mark and label
+  const tickFracs = [0, 1 / 3, 2 / 3, 1];
+  const axisY = CHART_HEIGHT - PAD.bottom;
+  tickFracs.forEach((frac, i) => {
+    const t = scale.tMin + frac * (scale.tMax - scale.tMin);
+    const x = scale.x(t);
+
+    const tick = document.createElementNS(svg.namespaceURI, "line");
+    tick.setAttribute("x1", x);
+    tick.setAttribute("x2", x);
+    tick.setAttribute("y1", axisY);
+    tick.setAttribute("y2", axisY + 4);
+    tick.setAttribute("stroke", "var(--text-dim)");
+    tick.setAttribute("stroke-width", "1");
+    svg.appendChild(tick);
+
+    const label = document.createElementNS(svg.namespaceURI, "text");
+    label.setAttribute("y", CHART_HEIGHT - 4);
+    label.setAttribute("font-size", "9");
+    label.setAttribute("fill", "var(--text-dim)");
+    if (i === 0) {
+      label.setAttribute("x", x);
+      label.setAttribute("text-anchor", "start");
+    } else if (i === tickFracs.length - 1) {
+      label.setAttribute("x", x);
+      label.setAttribute("text-anchor", "end");
+    } else {
+      label.setAttribute("x", x);
+      label.setAttribute("text-anchor", "middle");
+    }
+    label.textContent = formatElapsed(t - scale.tMin);
+    svg.appendChild(label);
+  });
 
   const d = usable.map((p, i) => `${i === 0 ? "M" : "L"} ${scale.x(p.t).toFixed(1)} ${scale.y(p[field]).toFixed(1)}`).join(" ");
   const path = document.createElementNS(svg.namespaceURI, "path");
@@ -89,27 +148,28 @@ function renderDimension(container, label, points, hasMap) {
   section.appendChild(heading);
 
   const body = document.createElement("div");
-  body.className = "dim-body";
+  body.className = hasMap ? "dim-body" : "dim-body no-map-layout";
 
   if (hasMap) {
     const mapCol = document.createElement("div");
     mapCol.className = "map-col";
     const img = document.createElement("img");
     img.src = `data/maps/${label}.png`;
-    img.alt = `Region-Karte: ${label}`;
+    img.alt = `Region map: ${label}`;
     img.loading = "lazy";
     img.onerror = () => {
-      mapCol.innerHTML = '<p class="no-map">Noch keine Karte generiert.</p>';
+      mapCol.innerHTML = '<p class="no-map">No map generated yet.</p>';
     };
     mapCol.appendChild(img);
     body.appendChild(mapCol);
+    mapCols[label] = mapCol;
   }
 
   const statsCol = document.createElement("div");
   statsCol.className = "stats-col";
 
   if (!points || points.length === 0) {
-    statsCol.innerHTML = '<p class="empty">Noch keine Performance-Daten.</p>';
+    statsCol.innerHTML = '<p class="empty">No performance data yet.</p>';
   } else {
     const latest = points[points.length - 1];
     const statsRow = document.createElement("div");
@@ -146,6 +206,92 @@ function renderDimension(container, label, points, hasMap) {
   container.appendChild(section);
 }
 
+function renderLeaderboard(entries) {
+  const el = document.getElementById("leaderboard");
+  if (!entries || entries.length === 0) {
+    el.innerHTML = "";
+    return;
+  }
+  // Already sorted by last_login (most recent first) server-side.
+  const rows = entries
+    .map((e) => {
+      const lastLogin = new Date(e.last_login).toLocaleString("en-US");
+      return `<li><span class="player">${e.player}</span><span class="hours">${e.hours}h</span><span class="last-login">last seen ${lastLogin}</span></li>`;
+    })
+    .join("");
+  el.innerHTML = `<h2>Playtime</h2><ol class="leaderboard-list">${rows}</ol>`;
+}
+
+// Distinct, stable-per-session colors - assigned by alphabetical rank among
+// currently-online players, so the same player keeps the same color across
+// every dimension's map and doesn't reshuffle as long as the online set
+// doesn't change. Doubles as this palette's cap on guaranteed-unique colors;
+// beyond that it repeats (cosmetic collision only).
+const PLAYER_COLORS = ["#ff6b6b", "#4dabf7", "#69db7c", "#ffd43b", "#da77f2", "#ff922b", "#38d9a9", "#f783ac"];
+
+function assignPlayerColors(players) {
+  const sorted = [...players].map((p) => p.name).sort();
+  const colors = new Map();
+  sorted.forEach((name, i) => colors.set(name, PLAYER_COLORS[i % PLAYER_COLORS.length]));
+  return colors;
+}
+
+function renderLiveStatus(live, colors) {
+  const el = document.getElementById("live-status");
+  if (!live) {
+    el.textContent = "Live status unavailable.";
+    el.className = "live-status unknown";
+    return;
+  }
+  if (!live.awake) {
+    el.innerHTML = '<span class="dot asleep"></span> Server is asleep - join to wake it up.';
+    el.className = "live-status asleep";
+    return;
+  }
+  if (live.players.length === 0) {
+    el.innerHTML = '<span class="dot awake"></span> Server is online - nobody online';
+  } else {
+    const chips = live.players
+      .map((p) => `<span class="player-chip"><span class="swatch" style="background:${colors.get(p.name)}"></span>${p.name}</span>`)
+      .join("");
+    el.innerHTML = `<span class="dot awake"></span> Server is online - ${chips}`;
+  }
+  el.className = "live-status awake";
+}
+
+function updatePlayerDots(live, colors) {
+  for (const mapCol of Object.values(mapCols)) {
+    mapCol.querySelectorAll(".player-dot").forEach((el) => el.remove());
+  }
+  if (!live || !live.awake) return;
+
+  for (const player of live.players) {
+    if (player.dim == null || player.x_pct == null || player.y_pct == null) continue;
+    const mapCol = mapCols[player.dim];
+    if (!mapCol) continue;
+
+    const dot = document.createElement("div");
+    dot.className = "player-dot";
+    dot.style.left = `${player.x_pct}%`;
+    dot.style.top = `${player.y_pct}%`;
+    dot.style.background = colors.get(player.name);
+    dot.title = player.name;
+    mapCol.appendChild(dot);
+  }
+}
+
+async function fetchLive() {
+  try {
+    const res = await fetch(LIVE_URL, { cache: "no-store" });
+    const live = await res.json();
+    const colors = assignPlayerColors(live.players || []);
+    renderLiveStatus(live, colors);
+    updatePlayerDots(live, colors);
+  } catch (err) {
+    renderLiveStatus(null);
+  }
+}
+
 async function main() {
   const container = document.getElementById("dimensions");
   let data;
@@ -153,16 +299,21 @@ async function main() {
     const res = await fetch(DATA_URL, { cache: "no-store" });
     data = await res.json();
   } catch (err) {
-    document.getElementById("generated-at").textContent = "Daten konnten nicht geladen werden.";
+    document.getElementById("generated-at").textContent = "Could not load data.";
     return;
   }
 
-  document.getElementById("generated-at").textContent = `Stand: ${new Date(data.generated_at).toLocaleString("de-DE")}`;
+  document.getElementById("generated-at").textContent = `Charts/maps last updated: ${new Date(data.generated_at).toLocaleString("en-US")}`;
+
+  renderLeaderboard(data.leaderboard);
 
   renderDimension(container, "overall", data.perf.overall, false);
   for (const label of data.dimensions) {
     renderDimension(container, label, data.perf[label], true);
   }
+
+  fetchLive();
+  setInterval(fetchLive, LIVE_POLL_MS);
 }
 
 main();

@@ -195,24 +195,39 @@ def render_map(label, main_cluster, output_path, outlier_count=0, scale=None):
     draw.text((pad, legend_y + legend_bar_height + round(18 * ui_scale)), f"newest: {newest_label}", font=body_font, fill=(190, 190, 190))
 
     img.save(output_path)
-    return width_regions, height_regions
+    # Layout in image-pixel space, kept internal (never published as-is) -
+    # login_logger.py uses this to turn a live player's raw block x/z into
+    # an approximate on-image percentage position without ever writing the
+    # exact coordinates anywhere public. Blocks-per-region is fixed at
+    # 32 chunks x 16 blocks = 512.
+    layout = {
+        "min_x_region": min_x,
+        "min_z_region": min_z,
+        "blocks_per_region": 512,
+        "scale": scale,
+        "map_offset_x": map_offset[0],
+        "map_offset_y": map_offset[1],
+        "canvas_width": canvas_width,
+        "canvas_height": canvas_height,
+    }
+    return width_regions, height_regions, layout
 
 
 def generate(label, region_subpath):
     region_dir = os.path.join(config.WORLD_DIR, region_subpath)
     if not os.path.isdir(region_dir):
         print(f"{label}: no region folder at {region_dir}, skipping")
-        return
+        return None
 
     coords = parse_region_coords(region_dir)
     if not coords:
         print(f"{label}: no region files found")
-        return
+        return None
 
     main_cluster, outliers = split_outliers(coords)
     os.makedirs(config.MAP_OUTPUT_DIR, exist_ok=True)
     output_path = os.path.join(config.MAP_OUTPUT_DIR, f"{label}.png")
-    width_regions, height_regions = render_map(label, main_cluster, output_path, outlier_count=len(outliers))
+    width_regions, height_regions, layout = render_map(label, main_cluster, output_path, outlier_count=len(outliers))
 
     print(
         f"{label}: {len(main_cluster)} regions mapped ({width_regions}x{height_regions} regions) -> {output_path}"
@@ -222,10 +237,16 @@ def generate(label, region_subpath):
         for x, z, fn, _mtime in outliers:
             print(f"    {fn} (x={x}, z={z})")
 
+    return layout
+
 
 def main():
+    layouts = {}
     for label, region_subpath in config.MAP_DIMENSIONS:
-        generate(label, region_subpath)
+        layout = generate(label, region_subpath)
+        if layout is not None:
+            layouts[label] = layout
+    return layouts
 
 
 if __name__ == "__main__":

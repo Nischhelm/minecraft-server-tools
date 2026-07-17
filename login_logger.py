@@ -31,6 +31,16 @@ Discord (too frequent). Emitted by the same mod as "[perf] dim=... mspt=...
 tps=... [chunks=... entities=...]" console lines; the "overall" row has no
 chunks/entities and leaves those columns empty.
 
+Also maintains the public "live" status (config.WEB_LIVE_STATUS_FILE,
+written directly - not through web_export.py's restart-triggered export,
+since online/offline and who's-online need to be current *within* a
+session, not just as of the last restart): whether mc-server is active, and
+for each online player their name, dimension, and an approximate on-map
+percentage position derived from the same "[playerpos] player=... dim=...
+x=... y=... z=..." lines the mod emits alongside perf - the exact block
+coordinates are used only for that percentage math and are never written
+anywhere, public or otherwise.
+
 Runs independently of mc_sleepd.py's state machine, watching both
 mc-server.service (for the FML "UUID of player" attempt marker, the
 "logged in with entity id" confirmation, chat, and "left the game") and
@@ -40,6 +50,7 @@ never sees since the real FML handshake hasn't started yet).
 
 import csv
 import datetime
+import json
 import os
 import queue
 import re
@@ -57,6 +68,7 @@ DIMENSION_LOG_FILE = os.path.join(BASE_DIR, "dimensions.csv")
 PERF_LOG_FILE = os.path.join(BASE_DIR, "perf.csv")
 KNOWN_BOTS_FILE = os.path.join(BASE_DIR, "known_bots.txt")
 SLEEPD_UNIT = "mc-sleepd.service"
+AWAKE_CHECK_INTERVAL_SECONDS = 5
 
 SWEEP_INTERVAL_SECONDS = 5
 # A wake attempt can be followed by a real join many minutes later (mod boot
@@ -87,6 +99,25 @@ PERF_RE = re.compile(
     r"\[perf\] dim=(?P<dim>\S+) mspt=(?P<mspt>[\d.]+) tps=(?P<tps>[\d.]+)"
     r"(?: chunks=(?P<chunks>\d+) entities=(?P<entities>\d+))?"
 )
+PLAYERPOS_RE = re.compile(
+    r"\[playerpos\] player=(?P<name>\S+) dim=(?P<dim>\S+) x=(?P<x>-?[\d.]+) y=(?P<y>-?[\d.]+) z=(?P<z>-?[\d.]+)"
+)
+
+
+def _normalize_dim(name):
+    """Same normalization as web_export.py's - matches the mod's
+    DimensionType names (e.g. "the_nether") up with region_map.py's
+    MAP_DIMENSIONS labels (e.g. "nether"). Duplicated rather than shared
+    since it's 4 lines and the two scripts otherwise don't need to import
+    from each other."""
+    name = name.rsplit(":", 1)[-1].lower()
+    if name.startswith("the_"):
+        name = name[len("the_"):]
+    return name
+
+
+DIMENSION_LABELS = [label for label, _ in config.MAP_DIMENSIONS]
+NORMALIZED_TO_LABEL = {_normalize_dim(label): label for label in DIMENSION_LABELS}
 
 # name -> {"since": monotonic time, "ip": str or None, "grace": seconds}
 pending = {}
@@ -96,6 +127,75 @@ pending = {}
 # Discord once, even across restarts - every attempt still lands in
 # logins.csv regardless.
 known_bots = set()
+
+# name -> {"dim": label or None, "x_pct": float or None, "y_pct": float or None}
+# Populated on login (dim/position unknown until the first [playerpos] tick,
+# up to ~60s later), updated on each tick, cleared on leave.
+live_players = {}
+server_awake = None
+last_awake_check = 0.0
+
+
+def load_map_layout():
+    try:
+        with open(config.MAP_LAYOUT_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def position_to_percent(dim_raw, x, z):
+    """Raw block x/z never leaves this function - only the resulting
+    percentage position (resolution-limited by the map's own pixel scale,
+    ~16 blocks/pixel) is kept or published anywhere."""
+    label = NORMALIZED_TO_LABEL.get(_normalize_dim(dim_raw))
+    if label is None:
+        return None, None, None
+    layout = load_map_layout().get(label)
+    if layout is None:
+        return label, None, None
+
+    region_x = x / layout["blocks_per_region"]
+    region_z = z / layout["blocks_per_region"]
+    px = layout["map_offset_x"] + (region_x - layout["min_x_region"]) * layout["scale"]
+    py = layout["map_offset_y"] + (region_z - layout["min_z_region"]) * layout["scale"]
+    x_pct = round(min(100.0, max(0.0, px / layout["canvas_width"] * 100)), 1)
+    y_pct = round(min(100.0, max(0.0, py / layout["canvas_height"] * 100)), 1)
+    return label, x_pct, y_pct
+
+
+def check_awake(force=False):
+    global server_awake, last_awake_check
+    now = time.monotonic()
+    if not force and now - last_awake_check < AWAKE_CHECK_INTERVAL_SECONDS:
+        return
+    last_awake_check = now
+    cmd = ["systemctl"]
+    if config.SYSTEMD_SCOPE:
+        cmd.append(config.SYSTEMD_SCOPE)
+    cmd.extend(["is-active", config.SYSTEMD_UNIT])
+    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    awake = result.returncode == 0
+    if awake != server_awake:
+        server_awake = awake
+        write_live_status()
+
+
+def write_live_status():
+    payload = {
+        "awake": bool(server_awake),
+        "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "players": [
+            {"name": name, "dim": p["dim"], "x_pct": p["x_pct"], "y_pct": p["y_pct"]}
+            for name, p in live_players.items()
+        ],
+    }
+    try:
+        os.makedirs(os.path.dirname(config.WEB_LIVE_STATUS_FILE), exist_ok=True)
+        with open(config.WEB_LIVE_STATUS_FILE, "w") as f:
+            json.dump(payload, f)
+    except OSError:
+        pass  # deploy dir not set up yet (see README) - not fatal
 
 
 def ensure_header():
@@ -135,12 +235,16 @@ def write_row(name, ip, status):
     print(f"{timestamp} {status}: {name} from {ip or 'unknown'}", flush=True)
     if status == "login":
         notifier.notify(f"{name} logged in")
+        live_players[name] = {"dim": None, "x_pct": None, "y_pct": None}
+        write_live_status()
     elif status == "bot":
         if name not in known_bots:
             remember_bot(name)
             notifier.notify(f"{name} tried to join without the modpack (not woken, likely a scanner)")
     elif status == "leave":
         notifier.notify(f"{name} left the game")
+        if live_players.pop(name, None) is not None:
+            write_live_status()
     else:
         notifier.notify(f"{name} tried to join but didn't connect")
 
@@ -210,6 +314,18 @@ def handle_line(line):
         )
         return
 
+    match = PLAYERPOS_RE.search(line)
+    if match:
+        # Not gated on the player already being in live_players (e.g. via a
+        # prior "login" row) - self-heals if login_logger.py was restarted
+        # mid-session and missed that event, rather than leaving them
+        # invisible until they reconnect.
+        name = match.group("name")
+        dim, x_pct, y_pct = position_to_percent(match.group("dim"), float(match.group("x")), float(match.group("z")))
+        live_players[name] = {"dim": dim, "x_pct": x_pct, "y_pct": y_pct}
+        write_live_status()
+        return
+
     # Checked before LEAVE_RE: a chat message that literally says "left the
     # game" (e.g. "<Alice> left the game") must not be mistaken for a real
     # leave - the "<name>" bracket syntax only ever appears in chat lines.
@@ -229,11 +345,13 @@ def sweep_pending():
     for name in expired:
         entry = pending.pop(name)
         write_row(name, entry["ip"], "attempt")
+    check_awake()
 
 
 def main():
     ensure_header()
     load_known_bots()
+    check_awake(force=True)
     # journalctl block-buffers its stdout once it's not a tty (i.e. always,
     # piped from here), so lines can sit unflushed for up to a minute before
     # we see them - stdbuf forces it to line-buffer instead. Only noticed

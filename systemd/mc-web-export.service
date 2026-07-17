@@ -1,0 +1,8 @@
+[Unit]
+Description=Rebuild the public Minecraft status page (region maps + perf charts + leaderboard)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/minecraft/sleepd
+ExecStart=/usr/bin/python3 %h/minecraft/sleepd/web_export.py

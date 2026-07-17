@@ -10,7 +10,7 @@ Players connect without needing to specify a port - the server runs on
 Minecraft's default port 25565 (`server-port` in `../server.properties`,
 `MC_PORT` in `config.py`).
 
-Three systemd **user** units are involved:
+Several systemd **user** units are involved:
 
 - **`mc-sleepd.service`** - the daemon (`mc_sleepd.py`) that watches everything.
   Meant to run permanently (starts at boot via `loginctl enable-linger`).
@@ -19,6 +19,8 @@ Three systemd **user** units are involved:
   `CPUWeight=300`/`IOWeight=300` (vs. the default 100) so it's prioritized
   over other services sharing this host.
 - **`mc-loginlog.service`** - independent login/chat/bot-attempt logger, see below.
+- **`mc-web-export.timer`/`.service`** - periodically rebuilds the public
+  status page, see below.
 
 All commands below use `systemctl --user` (not plain `systemctl`) because
 these are user-level units.
@@ -28,7 +30,7 @@ these are user-level units.
 Standard `systemctl --user` subcommands (`status`, `start`, `stop`,
 `restart`, `enable`/`disable` for autostart at boot) and
 `journalctl --user -u <unit> -f` (live logs) all work against any of the
-three units above.
+units above.
 
 A few things worth knowing:
 
@@ -134,17 +136,29 @@ Run manually with `python3 region_map.py`, or automatically as part of
 matches the exact prefix): one section per dimension with its `region_map.py`
 image and TPS/MSPT charts built from `perf.csv`, plus an "overall" section.
 `run_server.sh` backgrounds it (alongside `startup_notify.py`) on every
-`mc-server` start, so no separate timer is needed - region maps and perf
-charts regenerate on every restart/wake.
+`mc-server` start, and `mc-web-export.timer` also re-runs it every 15
+minutes so charts/maps/leaderboard stay reasonably current within a long
+session too, not just as of the last restart.
 
 Layout:
 
 - `web/` - source, committed: `index.html`, `style.css`, `app.js` (vanilla,
-  no build step, no external dependencies - fetches `data/perf.json`
-  client-side and draws the charts as inline SVG).
+  no build step, no external dependencies).
 - `web/data/` - generated, gitignored: `perf.json` (perf.csv downsampled to
-  one point/minute/dimension, last `config.WEB_PERF_HISTORY_DAYS` days) and
-  `maps/*.png` (copied from `../maps/`).
+  one point/minute/dimension, last `config.WEB_PERF_HISTORY_DAYS` days, plus
+  a playtime leaderboard, sorted by last login) and `maps/*.png` (copied
+  from `../maps/`).
+
+  The leaderboard pairs up `logins.csv`'s login/leave events per player. A
+  session's end is whichever comes first: its "leave" (or the next login /
+  now, for one that never got one) or the next `mc-server.service` restart
+  after it started (`web_export.get_server_restarts()`, matched via
+  systemd's `JOB_TYPE=start` job-done record rather than the log message
+  text, which is locale-dependent). The restart case matters because a
+  restart kills the connection without ever logging a "leave" - without
+  capping there, a session left open by a crash/restart gets stitched
+  together with whatever the player's *next*, unrelated login/leave pair
+  was, potentially hours later, and counted as one continuous session.
 - **`/var/www/mc-status`** - the actually-served copy. nginx runs as
   `www-data`, which can't traverse `/home/nischi` (mode `750`) at all, so
   `web_export.py`'s last step syncs all of `web/` (source + freshly
@@ -161,17 +175,37 @@ Layout:
   `web_export.py` never needs sudo again - it just writes into a directory
   it already owns.
 
-Dimension names from the mod's perf lines (`overworld`, `the_nether`, ...)
-and `region_map.py`'s own labels (`overworld`, `nether`, ...) are matched up
-by normalizing both (lowercase, strip a `the_` prefix, drop any `mod:`
-namespace prefix) rather than a hand-maintained ID table.
+Dimension names from the mod's perf/playerpos lines (`overworld`,
+`the_nether`, ...) and `region_map.py`'s own labels (`overworld`, `nether`,
+...) are matched up by normalizing both (lowercase, strip a `the_` prefix,
+drop any `mod:` namespace prefix) rather than a hand-maintained ID table.
+
+### Live status (online players, positions on the map)
+
+Unlike the charts/maps above, "is the server awake" and "who's online right
+now" need to be current *within* a session, not just as of the last
+restart - so this part bypasses `web_export.py`'s restart-only cadence
+entirely. `login_logger.py` writes `data/live.json` directly into
+`/var/www/mc-status` on every relevant event (login, leave, each
+`[playerpos]` tick) and re-checks `systemctl is-active mc-server` every 5s
+during its normal sweep, independent of `mc_sleepd.py`'s own state tracking.
+`app.js` polls it every 15s.
+
+**Exact player coordinates are never written anywhere, public or otherwise.**
+`login_logger.py` converts each `[playerpos] player=... dim=... x=... y=...
+z=...` line into an approximate on-map percentage position (using
+`config.MAP_LAYOUT_FILE`, the pixel geometry `web_export.py` writes on every
+restart) and only keeps/publishes that percentage - resolution-limited to
+the map's own pixel scale (~16 blocks/pixel), same as what's already visible
+by looking at the image. The raw x/y/z values only ever exist transiently
+inside `position_to_percent()`.
 
 ## MinecraftServerTool mod
 
 `mod/` is a small standalone Forge mod (Gradle project, not built/installed
 automatically - see its own directory for the build). Its `@Mod` annotation
 sets `acceptableRemoteVersions = "*"` so vanilla clients (without the mod)
-can still connect. It emits two kinds of plain console lines that
+can still connect. It emits three kinds of plain console lines that
 `login_logger.py` picks up:
 
 - `[dimchange] player=... from=... to=...` on `PlayerChangedDimensionEvent`
@@ -181,6 +215,9 @@ can still connect. It emits two kinds of plain console lines that
   `MinecraftServer.tickTimeArray`/`worldTickTimes`, loaded chunk count from
   `WorldServer.getChunkProvider().getLoadedChunkCount()`, loaded entity count
   from `WorldServer.loadedEntityList` - consumed as `perf.csv`, see above.
+- `[playerpos] player=... dim=... x=... y=... z=...` once a minute per
+  online player (same tick as `[perf]`) - consumed into the live status'
+  on-map percentage positions, see above. Never written to a CSV.
 
 Build with `./gradlew build` from `mod/` (needs the Forge 1.12.2 toolchain,
 first run downloads and decompiles Minecraft - can take 10+ minutes), then
@@ -199,13 +236,13 @@ copy the resulting jar from `mod/build/libs/` into `../mods/`.
 | `config.py` | All the tunable settings: ports, timeouts (20 min idle / 6h restart), messages, RCON/Discord paths |
 | `run_server.sh` | The actual `java ...` invocation used as `mc-server.service`'s `ExecStart`; also backgrounds `startup_notify.py` and `web_export.py` |
 | `startup_notify.py` | Posts "started manually" / "ready" Discord notices for every `mc-server` start, see above |
-| `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv`, every chat message to `chat.csv`, every dimension change to `dimensions.csv`, every perf sample to `perf.csv` |
+| `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv`, every chat message to `chat.csv`, every dimension change to `dimensions.csv`, every perf sample to `perf.csv`; also maintains the live status (see above) |
 | `notifier.py` | Posts login-logger and startup events to a Discord webhook, if configured |
 | `region_map.py` | Renders per-dimension "recently touched" region maps (see above) |
 | `web_export.py` | Builds the public status page (see above): runs `region_map.py`, downsamples `perf.csv` to `web/data/perf.json`, syncs everything to `/var/www/mc-status` |
 | `web/` | Public status page: `index.html`/`style.css`/`app.js` source (committed) + `data/` (generated, gitignored) |
 | `mod/` | `MinecraftServerTool` Forge mod source (Gradle project, see above) |
-| `systemd/mc-server.service`, `systemd/mc-sleepd.service`, `systemd/mc-loginlog.service` | The canonical unit files, symlinked into `~/.config/systemd/user/` |
+| `systemd/mc-server.service`, `systemd/mc-sleepd.service`, `systemd/mc-loginlog.service`, `systemd/mc-web-export.{service,timer}` | The canonical unit files, symlinked into `~/.config/systemd/user/` |
 
 ### Auto-generated files
 
@@ -214,6 +251,7 @@ copy the resulting jar from `mod/build/libs/` into `../mods/`.
 | `logins.csv`, `chat.csv`, `dimensions.csv`, `perf.csv` | The login/chat/dimension-change/perf history itself (see above); grows locally |
 | `known_bots.txt` | Player names already announced once as scanner `bot` attempts, so Discord isn't spammed on repeats |
 | `.sleepd_wake_marker` | Transient - dropped by `mc_sleepd.py` right before a wake-triggered start, deleted by `run_server.sh` on read; only ever exists for the few seconds between those two |
+| `map_layout.json` | Internal, never published - region-map pixel geometry per dimension, written by `web_export.py`, read by `login_logger.py` for the live position percentage math (see above) |
 | `maps/` | Output of `region_map.py`; regenerate anytime |
 
 ### Secrets

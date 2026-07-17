@@ -5,3 +5,4 @@ discord_webhook_url.txt
 maps/
 known_bots.txt
 web/data/
+map_layout.json

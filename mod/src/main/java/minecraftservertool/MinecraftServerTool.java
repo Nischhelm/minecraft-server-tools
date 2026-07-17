@@ -1,5 +1,6 @@
 package minecraftservertool;
 
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.DimensionType;
 import net.minecraft.world.WorldServer;
@@ -48,6 +49,14 @@ public class MinecraftServerTool {
             int entities = world.loadedEntityList.size();
 
             LOGGER.info("[perf] dim={} mspt={} tps={} chunks={} entities={}", dimensionName(dim), format(mspt), format(dimTps), chunks, entities);
+        }
+
+        for (EntityPlayerMP player : server.getPlayerList().getPlayers()) {
+            LOGGER.info(
+                "[playerpos] player={} dim={} x={} y={} z={}",
+                player.getName(), dimensionName(player.dimension),
+                format(player.posX), format(player.posY), format(player.posZ)
+            );
         }
     }
 
