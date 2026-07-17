@@ -53,9 +53,7 @@ python3 rcon_cli.py "give PlayerName minecraft:diamond 5"
 
 It reads the password from `rcon_password.txt` automatically. Only works
 while `mc-server` is actually running (RCON comes up once the world has
-loaded, near the end of boot). Note there's no interactive stdin console
-anymore like the old tmux window had - this is the replacement for typing
-commands directly.
+loaded, near the end of boot).
 
 ## Login, chat & bot-attempt logging
 
