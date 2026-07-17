@@ -39,9 +39,6 @@ A few things worth knowing:
   server won't auto-wake on join anymore, but a currently-running server
   keeps running); `loginctl disable-linger $USER` additionally undoes the
   boot-persistence entirely.
-- If you disable `mc-sleepd` and want the server reachable the old way,
-  start it directly with `systemctl --user start mc-server` (or fall back
-  to the original `../startup.sh` in a tmux session - untouched, still works).
 
 ## Talking to the running server (RCON)
 
