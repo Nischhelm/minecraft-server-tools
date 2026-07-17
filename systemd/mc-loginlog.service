@@ -1,0 +1,13 @@
+[Unit]
+Description=Login/leave/chat logger for the Minecraft server (logins.csv, chat.csv)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/minecraft/sleepd
+ExecStart=/usr/bin/python3 %h/minecraft/sleepd/login_logger.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

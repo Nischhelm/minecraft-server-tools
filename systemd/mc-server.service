@@ -1,0 +1,19 @@
+[Unit]
+Description=RLCraft Minecraft server (managed by mc-sleepd)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/minecraft
+ExecStart=%h/minecraft/sleepd/run_server.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+# Forge/vanilla exits with 143 (128+SIGTERM) on a graceful stop - treat that
+# as success so `systemctl status` shows "inactive" instead of "failed".
+SuccessExitStatus=143
+CPUWeight=300
+IOWeight=300
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Sleep/wake daemon for the Minecraft server
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/minecraft/sleepd
+ExecStart=/usr/bin/python3 %h/minecraft/sleepd/mc_sleepd.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
