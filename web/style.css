@@ -58,6 +58,7 @@ header {
 }
 
 .live-status .dot.awake { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.live-status .dot.starting { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
 .live-status .dot.asleep { background: var(--text-dim); }
 
 .player-chip {

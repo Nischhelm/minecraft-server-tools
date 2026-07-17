@@ -34,8 +34,12 @@ chunks/entities and leaves those columns empty.
 Also maintains the public "live" status (config.WEB_LIVE_STATUS_FILE,
 written directly - not through web_export.py's restart-triggered export,
 since online/offline and who's-online need to be current *within* a
-session, not just as of the last restart): whether mc-server is active, and
-for each online player their name, dimension, and an approximate on-map
+session, not just as of the last restart): one of "asleep" (mc-server.service
+inactive), "starting" (service active, mod loading still in progress - mirrors
+mc_sleepd.py's own STARTING state but is detected independently here via
+RCON reachability rather than IPC, since is-active alone can't tell the two
+apart), or "awake" (RCON responds) - and for each online player their name,
+dimension, and an approximate on-map
 percentage position derived from the same "[playerpos] player=... dim=...
 x=... y=... z=..." lines the mod emits alongside perf - the exact block
 coordinates are used only for that percentage math and are never written
@@ -48,6 +52,7 @@ mc-sleepd.service (for wake attempts, which carry an IP the running server
 never sees since the real FML handshake hasn't started yet).
 """
 
+import asyncio
 import csv
 import datetime
 import json
@@ -60,6 +65,7 @@ import time
 
 import config
 import notifier
+import rcon
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "logins.csv")
@@ -132,7 +138,7 @@ known_bots = set()
 # Populated on login (dim/position unknown until the first [playerpos] tick,
 # up to ~60s later), updated on each tick, cleared on leave.
 live_players = {}
-server_awake = None
+server_status = None  # "asleep" | "starting" | "awake"
 last_awake_check = 0.0
 
 
@@ -164,8 +170,18 @@ def position_to_percent(dim_raw, x, z):
     return label, x_pct, y_pct
 
 
+def _rcon_reachable():
+    try:
+        with open(config.RCON_PASSWORD_FILE) as f:
+            password = f.read().strip()
+        asyncio.run(rcon.rcon_command(config.RCON_HOST, config.RCON_PORT, password, "list"))
+        return True
+    except Exception:
+        return False
+
+
 def check_awake(force=False):
-    global server_awake, last_awake_check
+    global server_status, last_awake_check
     now = time.monotonic()
     if not force and now - last_awake_check < AWAKE_CHECK_INTERVAL_SECONDS:
         return
@@ -175,15 +191,20 @@ def check_awake(force=False):
         cmd.append(config.SYSTEMD_SCOPE)
     cmd.extend(["is-active", config.SYSTEMD_UNIT])
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    awake = result.returncode == 0
-    if awake != server_awake:
-        server_awake = awake
+    if result.returncode != 0:
+        status = "asleep"
+    elif _rcon_reachable():
+        status = "awake"
+    else:
+        status = "starting"
+    if status != server_status:
+        server_status = status
         write_live_status()
 
 
 def write_live_status():
     payload = {
-        "awake": bool(server_awake),
+        "status": server_status or "asleep",
         "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "players": [
             {"name": name, "dim": p["dim"], "x_pct": p["x_pct"], "y_pct": p["y_pct"]}

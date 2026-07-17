@@ -34,6 +34,15 @@ function formatElapsed(elapsedMs) {
   return `${minutes}m`;
 }
 
+// Minute+second resolution for short spans (startup takes 1-3 minutes, so
+// whole-minute formatElapsed() would sit on "0m" for most of it).
+function formatElapsedPrecise(elapsedMs) {
+  const totalSeconds = Math.max(0, Math.round(elapsedMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
 function buildScales(points, field, fixedMax) {
   const values = points.map((p) => p[field]).filter((v) => v != null);
   const min = 0;
@@ -243,14 +252,23 @@ function renderLiveStatus(live, colors) {
     el.className = "live-status unknown";
     return;
   }
-  if (!live.awake) {
-    // updated_at only moves while asleep when the awake state itself last
+  if (live.status === "asleep") {
+    // updated_at only moves while asleep when the status itself last
     // flipped (write_live_status() isn't called for player events while
     // there's nobody online to log in/out) - so it doubles as "asleep since".
     const asleepFor = live.updated_at ? formatElapsed(Math.max(0, Date.now() - new Date(live.updated_at).getTime())) : null;
     const suffix = asleepFor ? ` (${asleepFor})` : "";
     el.innerHTML = `<span class="dot asleep"></span> Server is asleep${suffix} - join to wake it up.`;
     el.className = "live-status asleep";
+    return;
+  }
+  if (live.status === "starting") {
+    // Same "updated_at doubles as since-this-state-began" reasoning as
+    // asleep above - nothing rewrites it while status stays "starting".
+    const startingFor = live.updated_at ? formatElapsedPrecise(Date.now() - new Date(live.updated_at).getTime()) : null;
+    const suffix = startingFor ? ` (${startingFor})` : "";
+    el.innerHTML = `<span class="dot starting"></span> Server is starting up${suffix} - mods are loading, this can take a few minutes.`;
+    el.className = "live-status starting";
     return;
   }
   if (live.players.length === 0) {
@@ -268,7 +286,7 @@ function updatePlayerDots(live, colors) {
   for (const mapCol of Object.values(mapCols)) {
     mapCol.querySelectorAll(".player-dot").forEach((el) => el.remove());
   }
-  if (!live || !live.awake) return;
+  if (!live || live.status !== "awake") return;
 
   for (const player of live.players) {
     if (player.dim == null || player.x_pct == null || player.y_pct == null) continue;
