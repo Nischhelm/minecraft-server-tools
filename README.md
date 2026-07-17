@@ -112,6 +112,8 @@ done yet.
 
 ## What each file does
 
+### Scripts
+
 | File | Purpose |
 |---|---|
 | `mc_sleepd.py` | The daemon itself: SLEEPING → STARTING → RUNNING state machine, idle-timeout and 6h-restart logic |
@@ -120,12 +122,22 @@ done yet.
 | `rcon_cli.py` | Standalone command-line tool for sending yourself RCON commands (see above) |
 | `config.py` | All the tunable settings: ports, timeouts (20 min idle / 6h restart), messages, RCON/Discord paths |
 | `run_server.sh` | The actual `java ...` invocation used as `mc-server.service`'s `ExecStart` |
-| `rcon_password.txt` | Auto-generated RCON password (also written into `../server.properties`); `chmod 600`, gitignored |
 | `login_logger.py` | Tails the server console and appends every login/attempt/bot-probe/leave to `logins.csv` and every chat message to `chat.csv` |
-| `logins.csv`, `chat.csv` | The login/chat history itself (see above); gitignored, grows locally |
 | `notifier.py` | Posts login-logger events to a Discord webhook, if configured |
-| `discord_webhook_url.txt` | Discord webhook URL for notifications (see above); `chmod 600`, gitignored |
-| `known_bots.txt` | Player names already announced once as scanner `bot` attempts, so Discord isn't spammed on repeats; gitignored |
 | `region_map.py` | Renders per-dimension "recently touched" region maps (see above) |
-| `maps/` | Output of `region_map.py`; gitignored, regenerate anytime |
 | `systemd/mc-server.service`, `systemd/mc-sleepd.service`, `systemd/mc-loginlog.service` | The canonical unit files, symlinked into `~/.config/systemd/user/` |
+
+### Auto-generated files
+
+| File | Purpose |
+|---|---|
+| `logins.csv`, `chat.csv` | The login/chat history itself (see above); gitignored, grows locally |
+| `known_bots.txt` | Player names already announced once as scanner `bot` attempts, so Discord isn't spammed on repeats; gitignored |
+| `maps/` | Output of `region_map.py`; gitignored, regenerate anytime |
+
+### Secrets
+
+| File | Purpose |
+|---|---|
+| `rcon_password.txt` | Auto-generated RCON password (also written into `../server.properties`); `chmod 600`, gitignored |
+| `discord_webhook_url.txt` | Discord webhook URL for notifications (see above); `chmod 600`, gitignored |
