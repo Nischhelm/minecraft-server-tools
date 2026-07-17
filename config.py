@@ -17,6 +17,11 @@ RCON_PASSWORD_FILE = os.path.join(BASE_DIR, "rcon_password.txt")
 # notifications. Notifications are silently skipped if this file is missing.
 DISCORD_WEBHOOK_FILE = os.path.join(BASE_DIR, "discord_webhook_url.txt")
 
+# Written by mc_sleepd.py just before it starts the server for a real player
+# wake, so run_server.sh can tell that apart from a manual/admin start or a
+# crash-restart and send a distinct Discord notice for those.
+WAKE_MARKER_FILE = os.path.join(BASE_DIR, ".sleepd_wake_marker")
+
 # Name of the systemd unit that starts/stops the real Minecraft server.
 SYSTEMD_UNIT = "mc-server.service"
 SYSTEMD_SCOPE = "--user"  # "" for system-wide units instead of user units

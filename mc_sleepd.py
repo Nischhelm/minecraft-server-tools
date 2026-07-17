@@ -151,6 +151,7 @@ class SleepDaemon:
             await self.listener.stop()
             log.info("Starting %s", config.SYSTEMD_UNIT)
             await asyncio.to_thread(notifier.notify, f"Server starting up ({name} connecting)")
+            open(config.WAKE_MARKER_FILE, "w").close()
             await systemctl("start", config.SYSTEMD_UNIT)
 
     async def _wait_for_startup(self):
