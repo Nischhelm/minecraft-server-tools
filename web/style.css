@@ -130,6 +130,17 @@ h1 {
   margin: 0;
 }
 
+.server-address {
+  margin: 8px 0 0;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.server-address .port {
+  font-style: italic;
+  color: var(--text-dim);
+}
+
 main {
   padding-top: 20px;
   padding-bottom: 40px;

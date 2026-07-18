@@ -58,11 +58,31 @@ function buildScales(points, field, fixedMax) {
   };
 }
 
+// Buckets are 1/minute; a gap of several missing buckets means the server
+// was asleep in between, not that the metric held steady.
+const GAP_MS = 5 * 60 * 1000;
+
 function lineChart(points, field, color, fixedMax) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`);
 
-  const usable = points.filter((p) => p[field] != null);
+  const usableAll = points.filter((p) => p[field] != null);
+  // Split into runs separated by sleep gaps, then chart the most recent run
+  // with more than one point. A lone straggler sample (e.g. a brief wake
+  // with no real play) would otherwise become "the newest point" and drag
+  // the axis out to cover a mostly-empty gap.
+  let usable = [];
+  if (usableAll.length > 0) {
+    const runs = [[usableAll[0]]];
+    for (let i = 1; i < usableAll.length; i++) {
+      if (usableAll[i].t - usableAll[i - 1].t > GAP_MS) runs.push([]);
+      runs[runs.length - 1].push(usableAll[i]);
+    }
+    usable = runs[runs.length - 1];
+    for (let i = runs.length - 1; i >= 0 && usable.length < 2; i--) {
+      if (runs[i].length >= 2) usable = runs[i];
+    }
+  }
   if (usable.length < 2) {
     const text = document.createElementNS(svg.namespaceURI, "text");
     text.setAttribute("x", CHART_WIDTH / 2);

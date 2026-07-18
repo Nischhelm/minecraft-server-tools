@@ -135,6 +135,13 @@ Run manually with `python3 region_map.py`, or automatically as part of
 (note the trailing slash - `/mc` without it 404s, nginx's `alias` only
 matches the exact prefix): one section per dimension with its `region_map.py`
 image and TPS/MSPT charts built from `perf.csv`, plus an "overall" section.
+
+Each TPS/MSPT chart's x-axis only ever covers the most recent run of
+samples less than 5 minutes apart (`app.js`'s `lineChart()`), not the full
+`WEB_PERF_HISTORY_DAYS` window - a sleep/wake cycle leaves a gap in
+`perf.csv`, and without this, a single straggler sample right after waking
+would count as "the newest point" and stretch the axis out to cover the
+mostly-empty gap instead of the actual session.
 `run_server.sh` backgrounds it (alongside `startup_notify.py`) on every
 `mc-server` start, and `mc-web-export.timer` also re-runs it every 15
 minutes so charts/maps/leaderboard stay reasonably current within a long
