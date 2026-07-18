@@ -10,6 +10,10 @@
 <header>
   <h1>Minecraft Server Status</h1>
   <p class="server-address">nischhelm.com<span class="port">:25565</span></p>
+  <!-- TODO: hardcoded, based on the oldest region file's mtime at the time this was
+       written (2026-07-18) - should be computed by web_export.py from actual world
+       data (e.g. oldest region/*.mca mtime) and written into perf.json/a new field,
+       not hand-edited here. -->
   <p class="meta">World last reset on May 10, 2026</p>
   <p class="meta" id="generated-at">loading…</p>
 </header>
